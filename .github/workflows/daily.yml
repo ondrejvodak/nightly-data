@@ -1,10 +1,19 @@
 # tcgcsv rebuilds around 20:00 UTC; this runs after it, once a day.
+# 1. catalog: rebuild the card lists and price maps, publish when changed
+#    (catalog/build.py). A failed build keeps yesterday's catalog.
+# 2. history: record today's TCGplayer prices (update.py), joined by the
+#    catalog's per-version pairs.
 name: nightly
 
 on:
   schedule:
     - cron: "30 21 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Publish the catalog even if unchanged"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -16,19 +25,33 @@ concurrency:
 jobs:
   record:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - name: Run
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Catalog
+        id: catalog
+        continue-on-error: true
+        run: |
+          pip install --quiet pillow
+          python3 catalog/build.py ${{ inputs.force && '--force' || '' }}
+      - name: History
         run: python3 update.py
       - name: Commit if anything changed
         run: |
           git config user.name "nightly"
           git config user.email "nightly@users.noreply.github.com"
-          git add data
+          git add data catalog/*.json
           if git diff --cached --quiet; then
             echo "No change."
           else
             git commit -m "$(date -u +%Y-%m-%d)"
             git push
           fi
+      - name: Catalog build failed
+        if: steps.catalog.outcome == 'failure'
+        run: |
+          echo "::error::Catalog build failed; yesterday's catalog is still published."
+          exit 1

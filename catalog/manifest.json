@@ -1,0 +1,23 @@
+{
+ "built": "2026-10-25T14:09Z",
+ "files": {
+  "cardmarket_map.json": {
+   "bytes": 198948,
+   "sha256": "42979ad7e406b469a59bd8138c87b0edac7f1ffad85cae132d313729f7491958"
+  },
+  "cards.json": {
+   "bytes": 3510331,
+   "sha256": "ff3d26bc1715721bb69cc6a627592bf67fad09d6e6af7272a04445aae2646b71"
+  },
+  "cards_ja.json": {
+   "bytes": 2581684,
+   "sha256": "1e89321da616467023b17c9a4e673420e9129b0cadceacbb324d9b56fdce3c4f"
+  },
+  "tcg_products.json": {
+   "bytes": 178216,
+   "sha256": "bff03f8da5494e5655cb259b2d6fa293a9cc63f0c2962128dd90ffa1229eb546"
+  }
+ },
+ "published": "2026-10-25T14:13Z",
+ "schema": 1
+}

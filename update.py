@@ -2,10 +2,11 @@
 """Nightly card price snapshot.
 
 Reads tcgcsv.com category 68 once a day (one sync, checked against
-last-updated.txt, 100 ms between requests, own User-Agent) and optcgapi.com's
-card lists, joins products to printing ids by card number and same-day market
-price (data/map.json), and appends each printing's market price to
-data/history_usd.json: printing id -> flat [day, cents, ...], days since
+last-updated.txt, 100 ms between requests, own User-Agent), joins products
+to printing ids by the catalog's own pairs (catalog/tcg_products.json: each
+printing's own TCGplayer product, checked by picture; copied to
+data/map.json), and appends each printing's market price (what copies sold
+for; a product nobody has bought has no point) to data/history_usd.json: printing id -> flat [day, cents, ...], days since
 1970-01-01 UTC. A point only when the price moved or a week passed; older
 than 30 days thinned to weekly; older than 3 years dropped.
 
@@ -18,15 +19,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 MAP = os.path.join(DATA, "map.json")
 HISTORY = os.path.join(DATA, "history_usd.json")
+CATALOG_MAP = os.path.join(HERE, "catalog", "tcg_products.json")
 STATE = os.path.join(DATA, "state.json")
 
 TCGCSV = "https://tcgcsv.com/tcgplayer/68"
 LAST_UPDATED = "https://tcgcsv.com/last-updated.txt"
-OPTCG = ["https://optcgapi.com/api/allSetCards/", "https://optcgapi.com/api/allSTCards/"]
 UA = "nightly-data/1.0"
 
 DAILY_WINDOW, KEEP_DAYS, WEEK = 30, 3 * 365, 7
-MATCH_TOLERANCE = 0.03  # 3%, and never more than 2 cents off for cheap cards
 
 
 def get(url, as_json=True):
@@ -90,40 +90,23 @@ def append(series, pid, price, today):
 
 # MARK: joining TCGplayer products to printing ids
 
-def close(a, b):
-    return abs(a - b) <= max(0.02, MATCH_TOLERANCE * max(a, b))
+def catalog_map():
+    """productId -> printing id, from the catalog build (empty if missing)."""
+    groups = load(CATALOG_MAP, {}).get("groups", {})
+    return {prod: pid for products in groups.values() for prod, pid in products.items()}
 
 
-def learn_map(mapping, products, prices, ours):
-    """products: productId -> number; prices: productId -> market; ours:
-    printing id -> (number, market). Adds productId -> printing id for every
-    unmapped printing whose price matches exactly one unmapped product of its
-    number, and that product matches no other printing."""
-    taken_products = set(mapping)
-    taken_printings = set(mapping.values())
-    by_number = {}
-    for prod, num in products.items():
-        if prod not in taken_products and prod in prices:
-            by_number.setdefault(num, []).append(prod)
-    ours_by_number = {}
-    for q, (n2, p2) in ours.items():
-        ours_by_number.setdefault(n2, []).append((q, p2))
-    added = 0
-    for pid, (num, price) in ours.items():
-        if pid in taken_printings:
-            continue
-        hits = [p for p in by_number.get(num, []) if close(prices[p], price)]
-        if len(hits) != 1:
-            continue
-        rivals = [q for q, p2 in ours_by_number[num]
-                  if q != pid and q not in taken_printings and close(prices[hits[0]], p2)]
-        if rivals:
-            continue
-        mapping[hits[0]] = pid
-        taken_printings.add(pid)
-        by_number[num].remove(hits[0])
-        added += 1
-    return added
+def drop_misfiled(history, old, new):
+    """Until 25 Oct 2026 products were joined to printings by same-day price,
+    which sometimes picked another version. A printing whose product the
+    catalog now names differently loses the points recorded under the old
+    one: they were another card's prices."""
+    was = {pid: prod for prod, pid in old.items()}
+    now = {pid: prod for prod, pid in new.items()}
+    dropped = [pid for pid, prod in was.items() if pid in now and now[pid] != prod]
+    for pid in dropped:
+        history.pop(pid, None)
+    return len(dropped)
 
 
 def main(force=False):
@@ -150,24 +133,18 @@ def main(force=False):
             products_cache[gid] = cached
         products.update(cached["numbers"])
         for r in get(f"{TCGCSV}/{gid}/prices")["results"]:
-            price = r.get("marketPrice") or r.get("lowPrice")
-            if price and price > 0:
+            price = r.get("marketPrice")
+            if price and price > 0 and (str(r["productId"]) not in prices or r.get("subTypeName") == "Normal"):
                 prices[str(r["productId"])] = price
     save(os.path.join(DATA, "products.json"), products_cache)
 
-    ours = {}
-    for url in OPTCG:
-        for row in get(url):
-            pid = row.get("card_image_id") or row.get("card_set_id")
-            price = row.get("market_price") or row.get("inventory_price")
-            if pid and row.get("card_set_id") and price and price > 0:
-                ours.setdefault(pid, (row["card_set_id"], price))
-
-    mapping = load(MAP, {})
-    added = learn_map(mapping, products, prices, ours)
-    save(MAP, mapping)
-
+    mapping = catalog_map()
+    if not mapping:
+        print("no catalog/tcg_products.json - nothing to join")
+        sys.exit(1)
     history = load(HISTORY, {"v": 1, "usd": {}})
+    dropped = drop_misfiled(history["usd"], load(MAP, {}), mapping)
+    save(MAP, mapping)
     today = today_day()
     recorded = 0
     for prod, pid in mapping.items():
@@ -182,7 +159,7 @@ def main(force=False):
     state["tcgcsv"] = stamp
     save(STATE, state)
     print(f"groups {len(groups)}, products {len(products)}, priced {len(prices)}, "
-          f"printings {len(ours)}, mapped {len(mapping)} (+{added}), recorded {recorded}")
+          f"mapped {len(mapping)}, recorded {recorded}, series dropped as misfiled {dropped}")
 
 
 if __name__ == "__main__":
