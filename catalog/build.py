@@ -11,6 +11,10 @@ and publishes them here when anything but prices changed:
     cardmarket_map.json Cardmarket product -> printing id (EN and ".ja")
     manifest.json       {"schema", "built", "files": {name: {sha256, bytes}}}
 
+and, every night, prices.json for the web app (the phone apps fetch their
+own): {"built", "usd": {id: TCGplayer market price}, "eur": {id: [Cardmarket
+trend, 7-day average, 30-day average]}}, English and Japanese (".ja") ids.
+
 The apps read manifest.json once a day and download the four files when
 `built` is newer than the catalog they have. tcg_map.json (printing ids,
 pinned so an id never moves) and img_hashes.json (picture hashes) are the
@@ -21,13 +25,14 @@ not published: the last good catalog stays.
 
 Run: python3 catalog/build.py [--force]   (needs Pillow)
 """
-import datetime, hashlib, json, os, shutil, subprocess, sys, tempfile
+import datetime, hashlib, json, os, shutil, subprocess, sys, tempfile, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, "scripts")
 FILES = ["cards.json", "cards_ja.json", "tcg_products.json", "cardmarket_map.json"]
 STATE = ["tcg_map.json", "img_hashes.json"]
 SCHEMA = 1
+GUIDE = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json"
 
 
 def load(path):
@@ -66,6 +71,30 @@ def check(work):
     return problems
 
 
+def write_prices(work):
+    """Today's prices by printing id, from the build's own card list (its
+    TCGplayer prices are today's) and Cardmarket's price guide joined by the
+    build's map."""
+    cards = load(os.path.join(work, "cards.json"))
+    usd = {c["id"]: c["usd"] for c in cards["cards"] + cards.get("sealed", []) if c.get("usd")}
+    cm = load(os.path.join(work, "cardmarket_map.json"))["map"]
+    req = urllib.request.Request(GUIDE, headers={"User-Agent": "KingofOP nightly"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        guide = json.load(r)
+    eur = {}
+    for e in guide["priceGuides"]:
+        cid = cm.get(str(e["idProduct"]))
+        trend = e.get("trend") or e.get("avg7") or e.get("avg")
+        if cid and trend and trend > 0:
+            eur[cid] = [round(trend, 2)] + [round(e[k], 2) if e.get(k) else None for k in ("avg7", "avg30")]
+    built = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    with open(os.path.join(HERE, "prices.json"), "w") as f:
+        json.dump({"built": built, "cardmarket": guide.get("createdAt"), "usd": usd, "eur": eur},
+                  f, separators=(",", ":"), sort_keys=True)
+    print(f"prices: {len(usd)} TCGplayer, {len(eur)} Cardmarket "
+          f"({sum(k.endswith('.ja') for k in eur)} Japanese)")
+
+
 def main(force=False):
     work = tempfile.mkdtemp(prefix="catalog-")
     for name in FILES + STATE:
@@ -83,6 +112,7 @@ def main(force=False):
     for name in STATE:
         if os.path.exists(os.path.join(work, name)):
             shutil.copy(os.path.join(work, name), HERE)
+    write_prices(work)
     changed = [n for n in FILES
                if without_prices(load(os.path.join(work, n))) != without_prices(load(os.path.join(HERE, n)))]
     if not changed and not force:
