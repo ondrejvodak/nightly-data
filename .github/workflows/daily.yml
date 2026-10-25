@@ -15,6 +15,8 @@ on:
         type: boolean
         default: false
 
+# Actions and Pillow pinned to exact versions: this job publishes what the
+# King of OP apps and site download.
 permissions:
   contents: write
 
@@ -27,15 +29,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
       - name: Catalog
         id: catalog
         continue-on-error: true
         run: |
-          pip install --quiet pillow
+          pip install --quiet pillow==12.2.0
           python3 catalog/build.py ${{ inputs.force && '--force' || '' }}
       - name: History
         run: python3 update.py
