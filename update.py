@@ -19,6 +19,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 MAP = os.path.join(DATA, "map.json")
 HISTORY = os.path.join(DATA, "history_usd.json")
+HISTORY_EUR = os.path.join(DATA, "history_eur.json")
+CATALOG_PRICES = os.path.join(HERE, "catalog", "prices.json")
 CATALOG_MAP = os.path.join(HERE, "catalog", "tcg_products.json")
 STATE = os.path.join(DATA, "state.json")
 
@@ -109,8 +111,30 @@ def drop_misfiled(history, old, new):
     return len(dropped)
 
 
+def record_eur():
+    """Today's Cardmarket trend per printing, from the catalog build. A
+    price guide already recorded (same createdAt) adds nothing."""
+    prices = load(CATALOG_PRICES, {})
+    eur, created = prices.get("eur") or {}, prices.get("cardmarket")
+    history = load(HISTORY_EUR, {"v": 1, "eur": {}})
+    if not eur or (created and history.get("cardmarket") == created):
+        print("Cardmarket guide unchanged or missing - no EUR points")
+        return
+    today = today_day()
+    for pid, row in eur.items():
+        if row and row[0]:
+            append(history["eur"], pid, row[0], today)
+    history["v"] = 1
+    history["source"] = "Cardmarket trend price (price guide)"
+    history["cardmarket"] = created
+    history["updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    save(HISTORY_EUR, history)
+    print(f"Cardmarket: recorded {len(eur)} printings")
+
+
 def main(force=False):
     os.makedirs(DATA, exist_ok=True)
+    record_eur()
     state = load(STATE, {})
     stamp = get(LAST_UPDATED, as_json=False).strip()
     if not force and state.get("tcgcsv") == stamp:
