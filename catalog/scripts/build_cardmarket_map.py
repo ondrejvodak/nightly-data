@@ -41,17 +41,31 @@ is which:
   base, alt art, manga). Otherwise only the base (the cheapest) is paired,
   or a lone product with a lone printing.
 
-Promos ("P-..." and promo sets) are left out: Cardmarket spreads one promo
-number over expansions that mix languages and event versions under one name,
-with nothing to tell them apart but price (24 Oct 2026: P-085's
-participation pack was paired with a 2-cent product, P-110's base with the
-Winner print). Anything that does not pass stays out of the map: the app
-then shows the TCGplayer price converted, never a wrong euro price.
+Promos ("P-..." and promo sets) are left out of that: Cardmarket spreads
+one promo number over expansions that mix languages and event versions
+under one name, with nothing to tell them apart but price (24 Oct 2026:
+P-085's participation pack was paired with a 2-cent product, P-110's base
+with the Winner print).
+
+LIMITLESS then has the last word for English printings (limitless.py):
+its print tables pair each print's TCGplayer product with its Cardmarket
+product by hand, and our printing of that TCGplayer product takes that
+Cardmarket product. That prices the promos and prize cards and settles
+versions close in price (28 Oct 2026: 867 printings gained a euro price,
+8 changed). Not taken: a product already held by a sibling printing of
+the same number and set (PRB foil and plain reprint, one Cardmarket
+product) or by a printing with no TCGplayer price, and a pair more than 4x off the TCGplayer price (Cardmarket
+mixes some promo versions under one product: Illustration Box $17 vs EUR
+109).
+
+Anything that does not pass stays out of the map: the app then shows the
+TCGplayer price converted, never a wrong euro price.
 
 Run after every set release, after build_card_catalog.py and
 build_jp_catalog.py.
 """
 import json, os, re, sys, urllib.request, collections
+import limitless
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # KOP_CATALOG_OUT (see build_card_catalog.py): the nightly job's folder.
@@ -64,6 +78,9 @@ OUTS = [os.path.join(RES, "cardmarket_map.json")] + (
 SEALED = "https://downloads.s3.cardmarket.com/productCatalog/productList/products_nonsingles_18.json"
 PRODUCTS = "https://downloads.s3.cardmarket.com/productCatalog/productList/products_singles_18.json"
 GUIDE = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json"
+TCG_PRODUCTS = os.path.join(RES, "tcg_products.json")
+# Limitless pages between runs: the nightly job keeps it with its state.
+LIMITLESS = os.path.join(CATALOG_OUT or os.path.join(ROOT, "scripts/.cache"), "limitless.json")
 NUMBER = re.compile(r"\(([A-Z]{1,4}\d{0,2}-\d{3})\)")
 NOT_ENGLISH = re.compile(r"Non-English|Japanese|Asia Region|Chinese|Korean", re.I)
 # Cardmarket's Japanese-language boxes: "(Non-English)", later "(Asia
@@ -95,14 +112,17 @@ def is_promo(c):
 
 
 def expansion_languages():
-    """(English, Japanese) expansion ids, read off their sealed products'
-    names. One without sealed products (promo-only lists) is neither."""
+    """(English, Japanese, foreign) expansion ids, read off their sealed
+    products' names. One without sealed products (promo-only lists) is none
+    of them. Foreign: most of its sealed products are not English (the
+    promo lists that also hold one Non-English collection are not)."""
     sealed = collections.defaultdict(list)
     for p in get(SEALED)["products"]:
         sealed[p["idExpansion"]].append(p["name"])
     english = {e for e, names in sealed.items() if not any(NOT_ENGLISH.search(n) for n in names)}
     japanese = {e for e, names in sealed.items() if any(JAPANESE.search(n) for n in names)}
-    return english, japanese
+    foreign = {e for e, names in sealed.items() if sum(bool(NOT_ENGLISH.search(n)) for n in names) > len(names) / 2}
+    return english, japanese, foreign
 
 
 def set_expansions(cards, singles, pool):
@@ -180,16 +200,65 @@ def picture_twins(japanese_cards, cards, same_set):
     return out
 
 
+def limitless_pairs(cards, mapping, guide, products, foreign):
+    """Each English printing Limitless pairs (by its TCGplayer product)
+    takes Limitless's Cardmarket product, in place of whatever it had."""
+    by_id = {c["id"]: c for c in cards}
+    by_pid = {}
+    for group in json.load(open(TCG_PRODUCTS))["groups"].values():
+        for pid, cid in group.items():
+            if cid in by_id:
+                by_pid[int(pid)] = cid
+    state = limitless.refresh(LIMITLESS, {c["num"] for c in cards}, products, guide, foreign,
+                              log=lambda m: print(m, file=sys.stderr))
+    owner = collections.defaultdict(list)
+    for pid, cid in mapping.items():
+        owner[cid].append(pid)
+    taken_by, changed, added, kept = set(), 0, 0, 0
+    for tcg, (num, cm) in limitless.pairs(state).items():
+        cid = by_pid.get(tcg)
+        if not cid or by_id[cid]["num"] != num:
+            continue
+        c, key = by_id[cid], str(cm)
+        holder = mapping.get(key)
+        if holder == cid:
+            taken_by.add(key)
+            continue
+        # PRB foil and plain reprint: two TCGplayer products, one Cardmarket
+        # product, already priced on the sibling. Nor is a product taken
+        # from a printing it is the only price of (ST-10's Nami, which
+        # TCGplayer sells as a promo copy of its own).
+        if holder in by_id and (by_id[holder]["num"] == num and by_id[holder]["set"] == c["set"]
+                                or not by_id[holder].get("usd")):
+            kept += 1
+            continue
+        if c.get("usd") and trend(guide.get(cm, {})) and ratio(trend(guide[cm]) * 1.12, c["usd"]) > 4:
+            continue
+        if owner[cid]:
+            changed += 1
+        else:
+            added += 1
+        for old in owner[cid]:
+            mapping.pop(old, None)
+        if holder:
+            owner[holder].remove(key)
+        mapping[key] = cid
+        owner[cid] = [key]
+        taken_by.add(key)
+    return taken_by, changed, added, kept
+
+
 def main():
     cards = [c for c in json.load(open(CARDS))["cards"]]
     japanese_cards = json.load(open(CARDS_JA))["cards"]
     japanese_ids = {c["id"] for c in japanese_cards}
 
-    english, japanese = expansion_languages()
+    english, japanese, foreign = expansion_languages()
     guide = {g["idProduct"]: g for g in get(GUIDE)["priceGuides"]}
     singles = collections.defaultdict(list)   # (expansion, number) -> products with a price
     listed = collections.defaultdict(list)    # (expansion, number) -> every product
-    for p in get(PRODUCTS)["products"]:
+    products = get(PRODUCTS)["products"]
+    for p in products:
         m = NUMBER.search(p["name"])
         if m:
             listed[(p["idExpansion"], m.group(1))].append(p)
@@ -250,6 +319,9 @@ def main():
                 mapping[str(best["idProduct"])] = c["id"]
                 taken.add(best["idProduct"])
                 others += 1
+
+    taken_by, changed, added, kept = limitless_pairs(cards, mapping, guide, products, foreign)
+    print(f"cardmarket_map: Limitless {added} added, {changed} changed, {kept} left with a sibling", file=sys.stderr)
 
     # Japanese: the set's Japanese expansion. Its products of a number pair
     # rank for rank with the Japanese printings ranked by their English
@@ -319,6 +391,8 @@ def main():
             paired[str(jprods[0]["idProduct"])] = base
         if not paired and len(jprods) == 1 and len(printings) == 1:
             paired[str(jprods[0]["idProduct"])] = printings[0]["id"]
+        # A product Limitless gave an English printing stays English.
+        paired = {k: v for k, v in paired.items() if k not in taken_by}
         mapping.update(paired)
         jp_count += len(paired)
 

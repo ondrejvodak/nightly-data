@@ -17,12 +17,15 @@ trend, 7-day average, 30-day average]}}, English and Japanese (".ja") ids.
 
 The apps read manifest.json once a day and download the four files when
 `built` is newer than the catalog they have. tcg_map.json (printing ids,
-pinned so an id never moves), img_hashes.json (picture hashes) and
-missing_pictures.json (TCGplayer photos known to be up) are the build's own
-state, kept here between runs.
+pinned so an id never moves), img_hashes.json (picture hashes),
+missing_pictures.json (TCGplayer photos known to be up) and limitless.json
+(Limitless TCG's print tables, a seventh re-read each night) are the build's
+own state, kept here between runs.
 
-A build that loses more than 2% of the printings, or leaves a map empty, is
-not published: the last good catalog stays.
+A build that loses more than 2% of the printings, leaves a map empty, or
+fails the audit against Limitless (scripts/audit_card_map.py: a TCGplayer
+product on the wrong printing, Cardmarket pairs that drifted) is not
+published: the last good catalog stays.
 
 Run: python3 catalog/build.py [--force]   (needs Pillow)
 """
@@ -31,7 +34,7 @@ import datetime, hashlib, json, os, shutil, subprocess, sys, tempfile, urllib.re
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, "scripts")
 FILES = ["cards.json", "cards_ja.json", "tcg_products.json", "cardmarket_map.json"]
-STATE = ["tcg_map.json", "img_hashes.json", "missing_pictures.json"]
+STATE = ["tcg_map.json", "img_hashes.json", "missing_pictures.json", "limitless.json"]
 SCHEMA = 1
 GUIDE = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json"
 
@@ -107,6 +110,9 @@ def main(force=False):
         subprocess.run([sys.executable, os.path.join(SCRIPTS, script)], env=env, cwd=SCRIPTS, check=True)
 
     problems = check(work)
+    print("== audit_card_map.py", flush=True)
+    if subprocess.run([sys.executable, os.path.join(SCRIPTS, "audit_card_map.py"), work], cwd=SCRIPTS).returncode:
+        problems.append("audit against Limitless failed")
     if problems:
         print("NOT PUBLISHED: " + "; ".join(problems))
         sys.exit(1)
