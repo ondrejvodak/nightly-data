@@ -15,6 +15,8 @@ Standard library only. Run: python3 update.py [--force]
 import gzip, json, os, sys, time, urllib.request
 from datetime import datetime, timezone
 
+import history
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 MAP = os.path.join(DATA, "map.json")
@@ -132,8 +134,21 @@ def record_eur():
     print(f"Cardmarket: recorded {len(eur)} printings")
 
 
+def record_day():
+    """Today's line in the daily history (history.py): every printing's
+    TCGplayer and Cardmarket price from the catalog build's prices.json."""
+    prices = load(CATALOG_PRICES, {})
+    rows = history.row(prices)
+    if not rows:
+        print("no catalog/prices.json - no daily history line")
+        return
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    print(f"daily history {day}: {len(rows)} printings, {history.append_day(day, rows)} sets appended")
+
+
 def main(force=False):
     os.makedirs(DATA, exist_ok=True)
+    record_day()
     record_eur()
     state = load(STATE, {})
     stamp = get(LAST_UPDATED, as_json=False).strip()
