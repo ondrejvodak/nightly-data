@@ -17,8 +17,9 @@ trend, 7-day average, 30-day average]}}, English and Japanese (".ja") ids.
 
 The apps read manifest.json once a day and download the four files when
 `built` is newer than the catalog they have. tcg_map.json (printing ids,
-pinned so an id never moves) and img_hashes.json (picture hashes) are the
-build's own state, kept here between runs.
+pinned so an id never moves), img_hashes.json (picture hashes) and
+missing_pictures.json (TCGplayer photos known to be up) are the build's own
+state, kept here between runs.
 
 A build that loses more than 2% of the printings, or leaves a map empty, is
 not published: the last good catalog stays.
@@ -30,7 +31,7 @@ import datetime, hashlib, json, os, shutil, subprocess, sys, tempfile, urllib.re
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, "scripts")
 FILES = ["cards.json", "cards_ja.json", "tcg_products.json", "cardmarket_map.json"]
-STATE = ["tcg_map.json", "img_hashes.json"]
+STATE = ["tcg_map.json", "img_hashes.json", "missing_pictures.json"]
 SCHEMA = 1
 GUIDE = "https://downloads.s3.cardmarket.com/productCatalog/priceGuide/price_guide_18.json"
 

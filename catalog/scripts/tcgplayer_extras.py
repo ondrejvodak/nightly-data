@@ -30,6 +30,7 @@ import os
 import pathlib
 import re
 import sys
+import urllib.error
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -368,6 +369,101 @@ def tracked_ids(tracked):
     return {cid for g in tracked.values() for cid in g.values()}
 
 
+# --- Pictures TCGplayer has not taken yet -------------------------------
+
+# TCGplayer lists a new set's parallels before it photographs them (EB-05,
+# Oct 2026: half its parallels 403), and Bandai's list never carries a
+# parallel it has not numbered. Limitless shows every print of a number on
+# its card page ("?v=1  aa", "?v=2  manga"), so a booster printing with no
+# TCGplayer photo takes Limitless's picture: matched by its variant label,
+# else as the one print of its number left over. Checked again each night,
+# so TCGplayer's own photo takes over once it is up.
+LIMITLESS = "https://onepiece.limitlesstcg.com/cards/"
+LIMITLESS_LABEL = {"Alt art": "aa", "Manga": "manga", "SP": "sp"}
+PICTURES = (CATALOG_OUT or CACHE) / "missing_pictures.json"
+
+
+def _get(url, head=False):
+    req = urllib.request.Request(url, method="HEAD" if head else "GET", headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, (b"" if head else r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, b""
+    except Exception:
+        return None, b""
+
+
+def limitless_prints(number):
+    """[(label, picture url)] for a number's prints in the set of its base
+    print, from Limitless's card page and each print's own page."""
+    status, page = _get(LIMITLESS + number)
+    if status != 200:
+        return None
+    rows = re.findall(r'<tr[^>]*>\s*<td>\s*<a\s*(?:href="/cards/[^"?]+\?v=(\d+)")?\s*>\s*([^<]*?)\s*'
+                      r'<span class="prints-table-card-number">([^<]*)</span>', page.decode("utf-8", "replace"))
+    home = next((name for v, name, _ in rows if not v), None)
+    out = []
+    for v, name, label in rows:
+        if v and name == home:
+            status, sub = _get(f"{LIMITLESS}{number}?v={v}")
+            m = re.search(rf'https://limitlesstcg\.[a-z0-9.]+/one-piece/[A-Z0-9]+/{re.escape(number)}_p{v}_EN\.webp',
+                          sub.decode("utf-8", "replace")) if status == 200 else None
+            if m:
+                out.append((label.strip().lower(), m.group(0)))
+    return out
+
+
+def fill_missing_pictures(cards):
+    """Limitless pictures for the TCGplayer-only booster printings whose
+    TCGplayer photo is not up yet."""
+    state = json.loads(PICTURES.read_text()) if PICTURES.exists() else {"ok": []}
+    ok = set(state["ok"])                    # product ids whose photo is up
+    home = {c["num"]: c["set"] for c in cards.values() if "_" not in c["id"]}
+    mine = [c for c in cards.values() if "_t" in c["id"] and home.get(c["num"]) == c["set"]]
+    check = [c for c in mine if c["id"].split("_t")[1] not in ok]
+
+    def up(c):
+        status, _ = _get(c["img"], head=True)
+        return c, status == 200
+
+    with concurrent.futures.ThreadPoolExecutor(16) as pool:
+        missing = []
+        for c, good in pool.map(up, check):
+            if good:
+                ok.add(c["id"].split("_t")[1])
+            else:
+                missing.append(c)
+    filled = 0
+    for number in sorted({c["num"] for c in missing}):
+        prints = limitless_prints(number)
+        if not prints:
+            continue
+        # Every TCGplayer-only printing of the number takes a print, photo or not,
+        # so the ones with a photo don't leave theirs for another.
+        siblings = sorted((c for c in mine if c["num"] == number), key=lambda c: c["id"])
+        # A print Bandai's list already carries (OP01-016_p1) is that printing's, not ours.
+        left = [p for p in prints if not re.search(r"/([A-Z0-9]+-\d+_p\d+)_EN\.webp$", p[1])
+                or re.search(r"/([A-Z0-9]+-\d+_p\d+)_EN\.webp$", p[1]).group(1) not in cards]
+        pairs = {}
+        for c in siblings:
+            want = [LIMITLESS_LABEL.get(v) for v in c.get("var", [])]
+            hit = next((p for p in left if p[0] in want), None)
+            if hit:
+                pairs[c["id"]] = hit
+                left.remove(hit)
+        rest = [c for c in siblings if c["id"] not in pairs]
+        if len(rest) == 1 and len(left) == 1:
+            pairs[rest[0]["id"]] = left[0]
+        for c in missing:
+            if c["num"] == number and c["id"] in pairs:
+                c["img"] = pairs[c["id"]][1]
+                filled += 1
+    PICTURES.parent.mkdir(parents=True, exist_ok=True)
+    PICTURES.write_text(json.dumps({"ok": sorted(ok)}, indent=0))
+    print(f"  {len(missing)} booster printings with no TCGplayer photo yet, {filled} given Limitless's")
+
+
 # --- Build ----------------------------------------------------------------
 
 def build(cards, sets, fetch):
@@ -597,6 +693,7 @@ def build(cards, sets, fetch):
         if pid in prices and (pid in sold or not cards[cid].get("usd")):
             cards[cid]["usd"] = prices[pid]
     print(f"  {len(listed)} of Bandai's printings paired with their TCGplayer product")
+    fill_missing_pictures(cards)
 
     # Newest pack last in `order`, as the shelf expects (it sorts -order).
     for s in sorted(new_sets.values(), key=lambda s: (s.get("released") or "", s.pop("_first"))):
