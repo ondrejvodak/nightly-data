@@ -326,8 +326,9 @@ def main():
     # Japanese: the set's Japanese expansion. Its products of a number pair
     # rank for rank with the Japanese printings ranked by their English
     # twin's worth (its Cardmarket euros, else its TCGplayer dollars in
-    # euros), when every printing has a twin and the counts agree.
-    euros = {cid: trend(guide[int(pid)]) for pid, cid in mapping.items()}
+    # euros), when every printing has a twin and the counts agree. A product
+    # listed but not yet sold has no guide row: its twin falls back to dollars.
+    euros = {cid: trend(guide[int(pid)]) for pid, cid in mapping.items() if int(pid) in guide}
     by_id = {c["id"]: c for c in cards}
 
     def same_set(en_set, ja_set):
