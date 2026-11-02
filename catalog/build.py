@@ -13,7 +13,8 @@ and publishes them here when anything but prices changed:
 
 and, every night, prices.json for the web app (the phone apps fetch their
 own): {"built", "usd": {id: TCGplayer market price}, "eur": {id: [Cardmarket
-trend, 7-day average, 30-day average]}}, English and Japanese (".ja") ids.
+trend, 7-day average, 30-day average, cheapest copy]}}, English and Japanese
+(".ja") ids.
 
 The apps read manifest.json once a day and download the four files when
 `built` is newer than the catalog they have. tcg_map.json (printing ids,
@@ -90,7 +91,7 @@ def write_prices(work):
         cid = cm.get(str(e["idProduct"]))
         trend = e.get("trend") or e.get("avg7") or e.get("avg")
         if cid and trend and trend > 0:
-            eur[cid] = [round(trend, 2)] + [round(e[k], 2) if e.get(k) else None for k in ("avg7", "avg30")]
+            eur[cid] = [round(trend, 2)] + [round(e[k], 2) if e.get(k) else None for k in ("avg7", "avg30", "low")]
     built = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
     with open(os.path.join(HERE, "prices.json"), "w") as f:
         json.dump({"built": built, "cardmarket": guide.get("createdAt"), "usd": usd, "eur": eur},
