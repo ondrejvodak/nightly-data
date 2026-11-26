@@ -1,23 +1,23 @@
 {
- "built": "2026-11-25T04:32Z",
+ "built": "2026-11-26T03:44Z",
  "files": {
   "cardmarket_map.json": {
-   "bytes": 224808,
-   "sha256": "cee3a8497458c86d3ea53088e6a96fc581323ebf797dee974f4f0c65aa85d2a5"
+   "bytes": 225304,
+   "sha256": "59603ba46935c8b65252a0562e6ae048977652f60a399ff18a96e1fe28821888"
   },
   "cards.json": {
-   "bytes": 3646442,
-   "sha256": "a4d6ff11813a25ce01af1da3f0d271bfb226d524b70a93900b909e1c9bf63cdc"
+   "bytes": 3646438,
+   "sha256": "3f0ea9b608faab38d7ec02591671a478df2b74fea545f0a0361d5bcbb6bceb5a"
   },
   "cards_ja.json": {
    "bytes": 2696050,
-   "sha256": "50e718bb71b348f11d8f500d787a3496f5fe104b44d395465bc718aca5f65e10"
+   "sha256": "feca524839806541e3d489254d671b2f849d0bbc2b69582a0d9704b204d561a5"
   },
   "tcg_products.json": {
    "bytes": 184955,
    "sha256": "04b6284b89e572a176f0ae8a18eee92e9e73efe21602061c0ed180376ef8fa1e"
   }
  },
- "published": "2026-11-25T04:34Z",
+ "published": "2026-11-26T03:46Z",
  "schema": 1
 }
